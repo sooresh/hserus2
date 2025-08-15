@@ -89,7 +89,7 @@ const MAX_SYMBOLS = 200;       // top N to scan
 const SHORT_1H_LIMIT = 3;      // fetch at least last 2 1h short ratios (we request 3 to be safe)
 const SHORT_15M_LIMIT = 1;     // only latest 15m short ratio needed
 const INTERVAL_1H = '1h';
-const INTERVAL_15M = '15m';
+const INTERVAL_15M = '5m';
 const EXCLUDE = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","TONUSDT","AVAXUSDT","DOTUSDT","TRXUSDT","SHIBUSDT","LINKUSDT","NEARUSDT","MATICUSDT","LTCUSDT","UNIUSDT","BCHUSDT","ICPUSDT","LEOUSDT"];
 const PAUSE_MS = 110; // pause between symbol requests to reduce chance of rate limit; increase if needed
 
@@ -349,4 +349,5 @@ window.addEventListener('load', () => { refreshBtn.click(); });
 </script>
 </body>
 </html>
+
 
