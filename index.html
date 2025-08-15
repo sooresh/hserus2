@@ -147,7 +147,7 @@ async function fetchKlines(symbol, interval, limit) {
 
 async function fetchShortAccounts(symbol, period, limit) {
   // topLongShortAccountRatio endpoint
-  const url = `https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol=${symbol}&period=${period}&limit=${limit}`;
+  const url = `https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=${period}&limit=${limit}`;
   const r = await fetch(url);
   if (!r.ok) {
     // throw error to be handled by caller
@@ -156,7 +156,7 @@ async function fetchShortAccounts(symbol, period, limit) {
   const arr = await r.json();
   // arr items have shortAccount field; map to floats
   // ensure we return in chronological order (oldest -> newest) as received
-  return arr.map(x => (x && x.shortAccount != null) ? parseFloat(x.shortAccount) : null);
+  return arr.map(x => (x && x.longAccount != null) ? parseFloat(x.longAccount) : null);
 }
 
 /* Main check logic:
@@ -349,3 +349,4 @@ window.addEventListener('load', () => { refreshBtn.click(); });
 </script>
 </body>
 </html>
+
