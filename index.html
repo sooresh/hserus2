@@ -172,11 +172,12 @@ function checkAndBuild(symbol, klines1h, short1hArr, short15mArr) {
   const last = klines1h[n-1], prev = klines1h[n-2], prev2 = klines1h[n-3];
 
   // Step0: volume condition
-  if (!(last.volume > prev.volume && last.volume > prev2.volume)) return null;
+  if (!(last.volume > prev.volume)) return null;
 
   // Step0: close % change condition
   const currClosePct = pctChange(prev.close, last.close);
-  if (!(Math.abs(currClosePct) > 1)) return null;
+  const prevClosePct = pctChange(prev2.close, prev.close);
+  if (!(Math.abs(currClosePct) > 1) || Math.abs(prevClosePct) > 1.5)) return null;
 
   // short arrays validation
   if (!short1hArr || short1hArr.length < 2) return null;
@@ -349,5 +350,6 @@ window.addEventListener('load', () => { refreshBtn.click(); });
 </script>
 </body>
 </html>
+
 
 
