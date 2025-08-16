@@ -177,7 +177,7 @@ function checkAndBuild(symbol, klines1h, short1hArr, short15mArr) {
   // Step0: close % change condition
   const currClosePct = pctChange(prev.close, last.close);
   const prevClosePct = pctChange(prev2.close, prev.close);
-  if (!(Math.abs(currClosePct) > 1) || Math.abs(prevClosePct) > 1.5)) return null;
+  if (!(Math.abs(currClosePct) > 1) || !(Math.abs(prevClosePct) > 1.5)) return null;
 
   // short arrays validation
   if (!short1hArr || short1hArr.length < 2) return null;
@@ -192,10 +192,10 @@ function checkAndBuild(symbol, klines1h, short1hArr, short15mArr) {
   if (short1hPrev === 0 || short1h === 0) return null;
 
   // Step2 cond_a (percent)
-  const cond_a = ((short15m - short1h) / short1h) * 100;
+  const cond_a = (short15m - short1h);
 
   // Step4 short1h_change
-  const short1hChange = ((short1h - short1hPrev) / short1hPrev) * 100;
+  const short1hChange = (short1h - short1hPrev);
 
   // Step3 direction rule
   const isGreen = last.close > prev.close;
@@ -350,6 +350,7 @@ window.addEventListener('load', () => { refreshBtn.click(); });
 </script>
 </body>
 </html>
+
 
 
 
