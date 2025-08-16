@@ -156,7 +156,7 @@ async function fetchShortAccounts(symbol, period, limit) {
   const arr = await r.json();
   // arr items have shortAccount field; map to floats
   // ensure we return in chronological order (oldest -> newest) as received
-  return arr.map(x => (x && x.longAccount != null) ? parseFloat(x.longAccount) : null);
+  return arr.map(x => (x && x.longShortRatio != null) ? parseFloat(x.longShortRatio) : null);
 }
 
 /* Main check logic:
@@ -350,6 +350,7 @@ window.addEventListener('load', () => { refreshBtn.click(); });
 </script>
 </body>
 </html>
+
 
 
 
