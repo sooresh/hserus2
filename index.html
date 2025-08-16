@@ -177,7 +177,7 @@ function checkAndBuild(symbol, klines1h, short1hArr, short15mArr) {
   // Step0: close % change condition
   const currClosePct = pctChange(prev.close, last.close);
   const prevClosePct = pctChange(prev2.close, prev.close);
-  if (!(Math.abs(currClosePct) > 1) || !(Math.abs(prevClosePct) > 1.5)) return null;
+  if (!(Math.abs(currClosePct) > 1 || (Math.abs(prevClosePct) > 1.5)) return null;
 
   // short arrays validation
   if (!short1hArr || short1hArr.length < 2) return null;
@@ -350,6 +350,7 @@ window.addEventListener('load', () => { refreshBtn.click(); });
 </script>
 </body>
 </html>
+
 
 
 
