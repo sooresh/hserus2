@@ -192,10 +192,10 @@ function checkAndBuild(symbol, klines1h, short1hArr, short15mArr) {
   if (short1hPrev === 0 || short1h === 0) return null;
 
   // Step2 cond_a (percent)
-  const cond_a = (short15m - short1h);
+  const cond_a = ((short15m - short1h)/short1h)*100;
 
   // Step4 short1h_change
-  const short1hChange = (short1h - short1hPrev);
+  const short1hChange = ((short1h - short1hPrev)/short1hPrev)*100;
 
   // Step3 direction rule
   const isGreen = last.close > prev.close;
@@ -205,7 +205,7 @@ function checkAndBuild(symbol, klines1h, short1hArr, short15mArr) {
   if (isGreen && !(short15m > short1h)) return null;
 
   // Step4 magnitude: abs(cond_a) >= 2 * abs(short1hChange)
-  if (!(Math.abs(cond_a) >= 2 * Math.abs(short1hChange))) return null;
+  if (!(Math.abs(cond_a) >= 1.2 * Math.abs(short1hChange))) return null;
 
   // build result object
   return {
@@ -350,6 +350,7 @@ window.addEventListener('load', () => { refreshBtn.click(); });
 </script>
 </body>
 </html>
+
 
 
 
