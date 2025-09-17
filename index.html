@@ -1,360 +1,139 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>hserus 2</title>
-<style>
-:root{--bg:#071827;--card:#0b2430;--muted:#9fb6c7;--accent:#7be3c7;--danger:#ff9a9a}
-body{margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:linear-gradient(#021119,#051521);color:#e6f3f6;padding:14px}
-header{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:center}
-h1{font-size:18px;margin:0}
-.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-select,button{padding:8px;border-radius:8px;border:1px solid #12333d;background:var(--card);color:inherit}
-button{cursor:pointer}
-#status{font-size:13px;color:var(--muted)}
-main{margin-top:12px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:10px;border-bottom:1px solid rgba(255,255,255,0.04)}
-th{color:var(--muted);font-size:12px}
-tr.match{background:linear-gradient(90deg, rgba(11,36,48,0.6), rgba(6,28,36,0.4))}
-.small{font-size:12px;color:var(--muted)}
-.green{color:#7be3c7}
-.red{color:#ff9a9a}
-@media(max-width:720px){ th,td{padding:8px;font-size:12px} h1{font-size:16px} }
-</style>
+  <meta charset="UTF-8">
+  <title>hserus2</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f9fafb; color: #111; margin: 20px; }
+    h1 { text-align: center; }
+    button { padding: 8px 16px; margin: 10px 0; cursor: pointer; border: none; border-radius: 6px; background: #2563eb; color: #fff; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { padding: 8px 12px; border: 1px solid #ddd; text-align: center; }
+    th { background: #f3f4f6; cursor: pointer; }
+    tr:nth-child(even) { background: #f9f9f9; }
+  </style>
 </head>
 <body>
-<header>
-  <div>
-    <h1>hserus 2</h1>
-    <div class="small">hserus 2</div>
-  </div>
-
-  <div class="controls">
-    <label class="small">Sort:
-      <select id="sortSelect" title="Choose sort column & order">
-        <option value="shortDiff_desc">Short Diff ↓ (default)</option>
-        <option value="shortDiff_asc">Short Diff ↑</option>
-
-        <option value="prevClosePct_desc">Prev Close % ↓</option>
-        <option value="prevClosePct_asc">Prev Close % ↑</option>
-
-        <option value="currClosePct_desc">Curr Close % ↓</option>
-        <option value="currClosePct_asc">Curr Close % ↑</option>
-
-        <option value="currVolPct_desc">Curr Vol % ↓</option>
-        <option value="currVolPct_asc">Curr Vol % ↑</option>
-
-        <option value="prevVolPct_desc">Prev Vol % ↓</option>
-        <option value="prevVolPct_asc">Prev Vol % ↑</option>
-
-        <option value="condA_desc">cond_a ↓</option>
-        <option value="condA_asc">cond_a ↑</option>
-
-        <option value="short1hChange_desc">Short 1h %chg ↓</option>
-        <option value="short1hChange_asc">Short 1h %chg ↑</option>
-      </select>
-    </label>
-
-    <button id="refreshBtn">Refresh Data</button>
-    <div id="status">Idle</div>
-  </div>
-</header>
-
-<main>
-  <table aria-live="polite">
+  <h1>hserus2</h1>
+  <button onclick="refreshData()">Refresh</button>
+  <table id="screener">
     <thead>
       <tr>
-        <th>Symbol</th>
-        <th>Prev close %</th>
-        <th>Curr close %</th>
-        <th>Curr vol %</th>
-        <th>Prev vol %</th>
-        <th>cond_a (%)</th>
-        <th>Short 1h %chg</th>
-        <th>Short Diff</th>
+        <th onclick="sortTable(0)">Symbol</th>
+        <th onclick="sortTable(1)">Close % Chg</th>
+        <th onclick="sortTable(2)">Volume % Chg</th>
+        <th onclick="sortTable(3)">Prev BB Squeeze %</th>
       </tr>
     </thead>
-    <tbody id="resultsBody">
-      <tr><td colspan="8" class="small">Click <strong>Refresh Data</strong> or reload page to scan.</td></tr>
-    </tbody>
+    <tbody></tbody>
   </table>
-</main>
 
-<script>
-/* Config */
-const LIMIT_1H = 3;            // we need last 3 1h candles
-const MAX_SYMBOLS = 200;       // top N to scan
-const SHORT_1H_LIMIT = 3;      // fetch at least last 2 1h short ratios (we request 3 to be safe)
-const SHORT_15M_LIMIT = 1;     // only latest 15m short ratio needed
-const INTERVAL_1H = '1h';
-const INTERVAL_15M = '5m';
-const EXCLUDE = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","TONUSDT","AVAXUSDT","DOTUSDT","TRXUSDT","SHIBUSDT","LINKUSDT","NEARUSDT","MATICUSDT","LTCUSDT","UNIUSDT","BCHUSDT","ICPUSDT","LEOUSDT"];
-const PAUSE_MS = 110; // pause between symbol requests to reduce chance of rate limit; increase if needed
+  <script>
+    const API = "https://fapi.binance.com/fapi/v1/klines";
+    let symbols = ["BTCUSDT","ETHUSDT","BNBUSDT","XRPUSDT","ADAUSDT"]; // Replace with 200 top symbols later
 
-/* DOM */
-const resultsBody = document.getElementById('resultsBody');
-const statusEl = document.getElementById('status');
-const refreshBtn = document.getElementById('refreshBtn');
-const sortSelect = document.getElementById('sortSelect');
-
-let results = [];
-
-/* Helpers */
-function pctChange(prev, curr) {
-  if (prev === 0 || prev === null || prev === undefined) return NaN;
-  return ((curr - prev) / prev) * 100;
-}
-function formatPct(v, digits=2) {
-  if (v === null || v === undefined || isNaN(v)) return '—';
-  return v.toFixed(digits) + '%';
-}
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-/* Network helpers */
-async function fetchPerpSymbols() {
-  const url = 'https://fapi.binance.com/fapi/v1/exchangeInfo';
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('exchangeInfo failed: ' + r.status);
-  const data = await r.json();
-  return data.symbols
-    .filter(s => s.contractType === 'PERPETUAL' && s.symbol.endsWith('USDT') && !EXCLUDE.includes(s.symbol))
-    .map(s => s.symbol);
-}
-
-async function fetchTopSymbols(limit = MAX_SYMBOLS) {
-  const [tickRes, perpSymbols] = await Promise.all([
-    fetch('https://fapi.binance.com/fapi/v1/ticker/24hr'),
-    fetchPerpSymbols()
-  ]);
-  if (!tickRes.ok) throw new Error('ticker24hr failed: ' + tickRes.status);
-  const tick = await tickRes.json();
-  return tick
-    .filter(t => t.symbol.endsWith('USDT') && perpSymbols.includes(t.symbol))
-    .sort((a,b) => Math.abs(parseFloat(b.priceChangePercent || 0)) - Math.abs(parseFloat(a.priceChangePercent || 0)))
-    .slice(0, limit)
-    .map(t => t.symbol);
-}
-
-async function fetchKlines(symbol, interval, limit) {
-  const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`klines failed ${symbol}: ${r.status}`);
-  const raw = await r.json();
-  return raw.map(r => ({ open:+r[1], high:+r[2], low:+r[3], close:+r[4], volume:+r[5] }));
-}
-
-async function fetchShortAccounts(symbol, period, limit) {
-  // topLongShortAccountRatio endpoint
-  const url = `https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=${period}&limit=${limit}`;
-  const r = await fetch(url);
-  if (!r.ok) {
-    // throw error to be handled by caller
-    throw new Error(`shortAccount fetch failed ${symbol} ${period} : ${r.status}`);
-  }
-  const arr = await r.json();
-  // arr items have shortAccount field; map to floats
-  // ensure we return in chronological order (oldest -> newest) as received
-  return arr.map(x => (x && x.longShortRatio != null) ? parseFloat(x.longShortRatio) : null);
-}
-
-/* Main check logic:
-  - prechecks on 1h candles (volume and abs(currClose% ) > 1)
-  - if pass, fetch short 1h series (need last & prev), fetch short 15m latest
-  - compute cond_a, short1hChange, shortDiff
-  - apply direction & magnitude rules
-*/
-function checkAndBuild(symbol, klines1h, short1hArr, short15mArr) {
-  // klines1h: array oldest->newest length >= 3
-  if (!klines1h || klines1h.length < 3) return null;
-  const n = klines1h.length;
-  const last = klines1h[n-1], prev = klines1h[n-2], prev2 = klines1h[n-3];
-
-  // Step0: volume condition
-  if (!(last.volume > prev.volume)) return null;
-
-  // Step0: close % change condition
-  const currClosePct = pctChange(prev.close, last.close);
-  const prevClosePct = pctChange(prev2.close, prev.close);
-  if (!(Math.abs(currClosePct) > 1 || Math.abs(prevClosePct) > 1.5)) return null;
-
-  // short arrays validation
-  if (!short1hArr || short1hArr.length < 2) return null;
-  if (!short15mArr || short15mArr.length < 1) return null;
-
-  const short1h = short1hArr[short1hArr.length - 1];
-  const short1hPrev = short1hArr[short1hArr.length - 2];
-  const short15m = short15mArr[short15mArr.length - 1];
-
-  // guard zeros / invalid
-  if (short1h === null || short1hPrev === null || short15m === null) return null;
-  if (short1hPrev === 0 || short1h === 0) return null;
-
-  // Step2 cond_a (percent)
-  const cond_a = ((short15m - short1h)/short1h)*100;
-
-  // Step4 short1h_change
-  const short1hChange = ((short1h - short1hPrev)/short1hPrev)*100;
-
-  // Step3 direction rule
-  const isGreen = last.close > prev.close;
-  const isRed = last.close < prev.close;
-  if (!isGreen && !isRed) return null; // ignore doji
-  if (isRed && !(short15m < short1h)) return null;
-  if (isGreen && !(short15m > short1h)) return null;
-
-  // Step4 magnitude: abs(cond_a) >= 2 * abs(short1hChange)
-  if (!(Math.abs(cond_a) >= 1.2 * Math.abs(short1hChange))) return null;
-
-  // build result object
-  return {
-    symbol,
-    prevClosePct: pctChange(prev2.close, prev.close),
-    currClosePct,
-    currVolPct: pctChange(prev.volume, last.volume),
-    prevVolPct: pctChange(prev2.volume, prev.volume),
-    condA: cond_a,
-    short1hChange,
-    shortDiff: short15m - short1h
-  };
-}
-
-/* Rendering helpers */
-function appendRow(obj) {
-  const tr = document.createElement('tr');
-  tr.className = 'match';
-  tr.innerHTML = `
-    <td><strong>${obj.symbol}</strong></td>
-    <td>${formatPct(obj.prevClosePct)}</td>
-    <td>${formatPct(obj.currClosePct)}</td>
-    <td>${formatPct(obj.currVolPct)}</td>
-    <td>${formatPct(obj.prevVolPct)}</td>
-    <td>${isNaN(obj.condA) ? '—' : obj.condA.toFixed(2) + '%'}</td>
-    <td>${isNaN(obj.short1hChange) ? '—' : obj.short1hChange.toFixed(2) + '%'}</td>
-    <td class="${obj.shortDiff >= 0 ? 'green' : 'red'}">${isNaN(obj.shortDiff) ? '—' : obj.shortDiff.toFixed(6)}</td>
-  `;
-  resultsBody.appendChild(tr);
-}
-
-function sortResults(list, sortKey) {
-  const [key, order] = sortKey.split('_');
-  const multiplier = (order === 'asc') ? 1 : -1;
-  return list.sort((a,b) => {
-    const va = (key in a) ? a[key] : NaN;
-    const vb = (key in b) ? b[key] : NaN;
-    if (isNaN(va) && isNaN(vb)) return 0;
-    if (isNaN(va)) return 1 * multiplier;
-    if (isNaN(vb)) return -1 * multiplier;
-    return (va - vb) * multiplier;
-  });
-}
-
-function renderTable() {
-  const sel = sortSelect.value;
-  const sorted = sortResults([...results], sel);
-  resultsBody.innerHTML = '';
-  if (sorted.length === 0) {
-    resultsBody.innerHTML = '<tr><td colspan="8" class="small">No matches found.</td></tr>';
-    return;
-  }
-  for (const r of sorted) appendRow(r);
-}
-
-/* Main scanning loop */
-async function runScan() {
-  try {
-    results = [];
-    resultsBody.innerHTML = '<tr><td colspan="8" class="small">Preparing scan...</td></tr>';
-    statusEl.textContent = 'Fetching symbol list...';
-
-    const symbols = await fetchTopSymbols(MAX_SYMBOLS);
-    statusEl.textContent = `Scanning 0 / ${symbols.length}`;
-
-    let i = 0;
-    for (const sym of symbols) {
-      i++;
-      statusEl.textContent = `Scanning ${i} / ${symbols.length}: ${sym}`;
-      try {
-        // fetch 1h klines first (we only need 3 candles)
-        const klines1h = await fetchKlines(sym, INTERVAL_1H, LIMIT_1H);
-        if (!klines1h || klines1h.length < 3) { await sleep(PAUSE_MS); continue; }
-
-        // Step0 prechecks (volume and close %)
-        const last = klines1h[klines1h.length - 1];
-        const prev = klines1h[klines1h.length - 2];
-        const prev2 = klines1h[klines1h.length - 3];
-        const lastVol = last.volume, prevVol = prev.volume, prev2Vol = prev2.volume;
-        const lastClosePct = pctChange(prev.close, last.close);
-
-        if (!(lastVol > prevVol && lastVol > prev2Vol && Math.abs(lastClosePct) > 1)) {
-          // prechecks failed, skip 15m fetch
-          await sleep(PAUSE_MS);
-          continue;
-        }
-
-        // prechecks passed -> fetch 1h short account series (needed for short1h and prev)
-        let short1hArr;
-        try {
-          short1hArr = await fetchShortAccounts(sym, INTERVAL_1H, SHORT_1H_LIMIT);
-        } catch (e) {
-          console.warn('short1h fetch error', sym, e.message || e);
-          await sleep(PAUSE_MS);
-          continue;
-        }
-        if (!short1hArr || short1hArr.length < 2) { await sleep(PAUSE_MS); continue; }
-
-        // fetch 15m short only after prechecks passed
-        let short15mArr;
-        try {
-          short15mArr = await fetchShortAccounts(sym, INTERVAL_15M, SHORT_15M_LIMIT);
-        } catch (e) {
-          console.warn('short15m fetch error', sym, e.message || e);
-          await sleep(PAUSE_MS);
-          continue;
-        }
-        if (!short15mArr || short15mArr.length < 1) { await sleep(PAUSE_MS); continue; }
-
-        // now evaluate full conditions
-        const obj = checkAndBuild(sym, klines1h, short1hArr, short15mArr);
-        if (obj) {
-          results.push(obj);
-          appendRow(obj); // append live
-        }
-      } catch (errSym) {
-        console.warn('symbol error', sym, errSym.message || errSym);
-      }
-      await sleep(PAUSE_MS);
+    async function fetchKlines(symbol, interval="1h", limit=25) {
+      let url = `${API}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      let res = await fetch(url);
+      return res.json();
     }
 
-    statusEl.textContent = `Scan complete — found ${results.length} matches.`;
-    renderTable(); // final sorted table
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = 'Error: ' + (err.message || err);
-  }
-}
+    function calcBollinger(closes, period=20, mult=2) {
+      let sma = [];
+      let upper = [];
+      let lower = [];
+      for (let i=0; i<closes.length; i++) {
+        if (i < period-1) { sma.push(null); upper.push(null); lower.push(null); continue; }
+        let slice = closes.slice(i-period+1, i+1);
+        let mean = slice.reduce((a,b)=>a+b,0)/period;
+        let variance = slice.reduce((a,b)=>a+(b-mean)**2,0)/period;
+        let stdev = Math.sqrt(variance);
+        sma.push(mean);
+        upper.push(mean + mult*stdev);
+        lower.push(mean - mult*stdev);
+      }
+      return { sma, upper, lower };
+    }
 
-/* Wiring */
-refreshBtn.addEventListener('click', () => {
-  refreshBtn.disabled = true;
-  resultsBody.innerHTML = '<tr><td colspan="8" class="small">Starting scan... (this may take 20–90s depending on MAX_SYMBOLS)</td></tr>';
-  runScan().finally(() => { refreshBtn.disabled = false; });
-});
+    async function checkSymbol(symbol) {
+      try {
+        let klines = await fetchKlines(symbol);
+        if (!klines || klines.length < 22) return null;
 
-sortSelect.addEventListener('change', () => renderTable());
+        let closes = klines.map(k => parseFloat(k[4]));
+        let volumes = klines.map(k => parseFloat(k[5]));
+        let opens = klines.map(k => parseFloat(k[1]));
+        let highs = klines.map(k => parseFloat(k[2]));
+        let lows = klines.map(k => parseFloat(k[3]));
 
-// Auto-run on load (page refresh triggers scan). If you don't want auto-run, comment out next line.
-window.addEventListener('load', () => { refreshBtn.click(); });
+        let last = klines.length-1;
+        let prev = last-1;
+        let prevprev = last-2;
 
-</script>
+        // (1) volume condition
+        if (!(volumes[last] > volumes[prev] && volumes[prev] > volumes[prevprev])) return null;
+
+        // Bollinger
+        let {sma, upper, lower} = calcBollinger(closes);
+        let prevBandWidth = upper[prev] - lower[prev];
+        let prevPrevBandWidth = upper[prevprev] - lower[prevprev];
+        if (prevBandWidth > prevPrevBandWidth) return null; // not squeezing
+
+        let currGreen = closes[last] > opens[last];
+        let breakout = false;
+        if (currGreen && (highs[last] > upper[last] || highs[last] > sma[last])) breakout = true;
+        if (!currGreen && (lows[last] < lower[last] || lows[last] < sma[last])) breakout = true;
+        if (!breakout) return null;
+
+        // Metrics
+        let closeChange = ((closes[last] - closes[prev]) / closes[prev]) * 100;
+        let volChange = ((volumes[last] - volumes[prev]) / volumes[prev]) * 100;
+        let squeezeChange = ((prevBandWidth - prevPrevBandWidth) / prevPrevBandWidth) * 100;
+
+        return {
+          symbol,
+          closeChange: closeChange.toFixed(2)+"%",
+          volChange: volChange.toFixed(2)+"%",
+          squeezeChange: squeezeChange.toFixed(2)+"%"
+        };
+      } catch(e) {
+        console.error(symbol, e);
+        return null;
+      }
+    }
+
+    async function refreshData() {
+      document.querySelector("tbody").innerHTML = "<tr><td colspan='4'>Loading...</td></tr>";
+      let results = [];
+      for (let i=0;i<symbols.length;i++) {
+        let row = await checkSymbol(symbols[i]);
+        if (row) results.push(row);
+      }
+      let tbody = document.querySelector("tbody");
+      tbody.innerHTML = "";
+      results.forEach(r=>{
+        tbody.innerHTML += `<tr>
+          <td>${r.symbol}</td>
+          <td>${r.closeChange}</td>
+          <td>${r.volChange}</td>
+          <td>${r.squeezeChange}</td>
+        </tr>`;
+      });
+    }
+
+    function sortTable(col) {
+      let table = document.getElementById("screener");
+      let rows = Array.from(table.rows).slice(1);
+      let asc = table.getAttribute("data-sort-col")==col && table.getAttribute("data-sort-dir")=="asc" ? false : true;
+      rows.sort((a,b)=>{
+        let x = a.cells[col].innerText.replace("%","");
+        let y = b.cells[col].innerText.replace("%","");
+        return asc ? x-y : y-x;
+      });
+      rows.forEach(r=>table.tBodies[0].appendChild(r));
+      table.setAttribute("data-sort-col", col);
+      table.setAttribute("data-sort-dir", asc ? "asc":"desc");
+    }
+  </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
