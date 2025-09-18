@@ -25,6 +25,7 @@
         <th onclick="sortTable(1)">Close % Chg</th>
         <th onclick="sortTable(2)">Volume % Chg</th>
         <th onclick="sortTable(3)">Prev BB Squeeze %</th>
+        <th onclick="sortTable(4)">SMA20 Trend</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -37,25 +38,23 @@
     const excludeSymbols = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","TRXUSDT","MATICUSDT","DOTUSDT","TONUSDT","LTCUSDT","BCHUSDT","AVAXUSDT","LINKUSDT","UNIUSDT","XLMUSDT","OPUSDT","ETCUSDT","NEARUSDT"];
 
     async function fetchSymbols() {
-      // Get all futures symbols
       let resInfo = await fetch(API_EXCHANGEINFO);
       let dataInfo = await resInfo.json();
       let symbolsAll = dataInfo.symbols.filter(s=>s.contractType==="PERPETUAL").map(s=>s.symbol);
 
-      // Get 24h stats
       let resTick = await fetch(API_TICKER24H);
       let tickers = await resTick.json();
 
-      // Filter only perpetual symbols
       let filtered = tickers.filter(t => symbolsAll.includes(t.symbol));
-
-      // Sort by 24h volume (quoteVolume)
       filtered.sort((a,b)=> parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume));
 
-      // Exclude top 20 by global market cap symbols
-      let symbols = filtered.map(t=>t.symbol).filter(s=>!excludeSymbols.includes(s));
+      // Only USDT pairs, exclude USDC
+      let symbols = filtered.map(t=>t.symbol).filter(s=>
+        s.endsWith("USDT") &&
+        !s.endsWith("USDC") &&
+        !excludeSymbols.includes(s)
+      );
 
-      // Take top 200
       return symbols.slice(0,200);
     }
 
@@ -95,19 +94,27 @@
         let prev = last-1;
         let prevprev = last-2;
 
-        // (1) volume condition
+        // Condition (1): current vol > prev2
         if (!(volumes[last] > volumes[prev] && volumes[last] > volumes[prevprev])) return null;
 
-        // Bollinger
         let {sma, upper, lower} = calcBollinger(closes);
         let prevBandWidth = upper[prev] - lower[prev];
         let prevPrevBandWidth = upper[prevprev] - lower[prevprev];
-        if (prevBandWidth > prevPrevBandWidth) return null; // not squeezing
+
+        // Condition (2): squeezing
+        if (prevBandWidth > prevPrevBandWidth) return null;
 
         let currGreen = closes[last] > opens[last];
         let breakout = false;
-        if (currGreen && (highs[last] > upper[last] || highs[last] > sma[last])) breakout = true;
-        if (!currGreen && (lows[last] < lower[last] || lows[last] < sma[last])) breakout = true;
+
+        // Condition (3)
+        if (currGreen && highs[last] > upper[last]) breakout = true;
+        if (!currGreen && lows[last] < lower[last]) breakout = true;
+
+        // Condition (4)
+        if (currGreen && highs[last] > sma[last]) breakout = breakout && true;
+        if (!currGreen && lows[last] < sma[last]) breakout = breakout && true;
+
         if (!breakout) return null;
 
         // Metrics
@@ -115,11 +122,14 @@
         let volChange = ((volumes[last] - volumes[prev]) / volumes[prev]) * 100;
         let squeezeChange = ((prevBandWidth - prevPrevBandWidth) / prevPrevBandWidth) * 100;
 
+        let smaTrend = (sma[last] > sma[prev]) ? "Increasing" : "Decreasing";
+
         return {
           symbol,
           closeChange: closeChange.toFixed(2)+"%",
           volChange: volChange.toFixed(2)+"%",
-          squeezeChange: squeezeChange.toFixed(2)+"%"
+          squeezeChange: squeezeChange.toFixed(2)+"%",
+          smaTrend
         };
       } catch(e) {
         console.error(symbol, e);
@@ -128,7 +138,7 @@
     }
 
     async function refreshData() {
-      document.querySelector("tbody").innerHTML = "<tr><td colspan='4'>Loading symbols...</td></tr>";
+      document.querySelector("tbody").innerHTML = "<tr><td colspan='5'>Loading symbols...</td></tr>";
       document.getElementById("status").innerText = "Fetching top 200 symbols...";
       let symbols = await fetchSymbols();
 
@@ -142,7 +152,7 @@
       let tbody = document.querySelector("tbody");
       tbody.innerHTML = "";
       if (results.length === 0) {
-        tbody.innerHTML = "<tr><td colspan='4'>No matches found</td></tr>";
+        tbody.innerHTML = "<tr><td colspan='5'>No matches found</td></tr>";
       } else {
         results.forEach(r=>{
           tbody.innerHTML += `<tr>
@@ -150,6 +160,7 @@
             <td>${r.closeChange}</td>
             <td>${r.volChange}</td>
             <td>${r.squeezeChange}</td>
+            <td>${r.smaTrend}</td>
           </tr>`;
         });
       }
@@ -163,12 +174,16 @@
       rows.sort((a,b)=>{
         let x = a.cells[col].innerText.replace("%","");
         let y = b.cells[col].innerText.replace("%","");
+        if (isNaN(x) || isNaN(y)) return asc ? x.localeCompare(y) : y.localeCompare(x);
         return asc ? x-y : y-x;
       });
       rows.forEach(r=>table.tBodies[0].appendChild(r));
       table.setAttribute("data-sort-col", col);
       table.setAttribute("data-sort-dir", asc ? "asc":"desc");
     }
+
+    // Run on page load
+    refreshData();
   </script>
 </body>
 </html>
