@@ -1,190 +1,367 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>hserus2</title>
-  <style>
-    body { font-family: Arial, sans-serif; background: #f9fafb; color: #111; margin: 20px; }
-    h1 { text-align: center; }
-    button { padding: 8px 16px; margin: 10px 0; cursor: pointer; border: none; border-radius: 6px; background: #2563eb; color: #fff; }
-    #status { margin: 10px 0; font-weight: bold; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { padding: 8px 12px; border: 1px solid #ddd; text-align: center; }
-    th { background: #f3f4f6; cursor: pointer; }
-    tr:nth-child(even) { background: #f9f9f9; }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>hserus2</title>
+<style>
+  :root{--bg:#08121a;--card:#0b2430;--muted:#9fb6c7;--accent:#7be3c7;--danger:#ff9a9a}
+  body{margin:0;font-family:Inter,system-ui,Arial,Helvetica,sans-serif;background:linear-gradient(#041019,#071426);color:#e6f3f6;padding:14px}
+  h1{margin:0 0 8px;font-size:18px}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  input,select,button{padding:8px;border-radius:8px;border:1px solid #12333d;background:var(--card);color:inherit}
+  button{cursor:pointer}
+  #status{font-size:13px;color:var(--muted)}
+  .tablewrap{overflow:auto;border:1px solid rgba(255,255,255,0.03);border-radius:8px;background:rgba(0,0,0,0.06)}
+  table{width:100%;border-collapse:collapse;min-width:1100px}
+  th,td{text-align:left;padding:10px;border-bottom:1px solid rgba(255,255,255,0.04)}
+  th{color:var(--muted);font-size:12px;cursor:pointer}
+  tr.match{background:linear-gradient(90deg, rgba(11,36,48,0.6), rgba(6,28,36,0.4))}
+  .small{font-size:12px;color:var(--muted)}
+  .numeric{text-align:right}
+  .green{color:#7be3c7}
+  .red{color:#ff9a9a}
+  @media(max-width:900px){ table{min-width:900px} th,td{padding:8px;font-size:12px} }
+</style>
 </head>
 <body>
   <h1>hserus2</h1>
-  <button onclick="refreshData()">Refresh</button>
-  <div id="status">Idle</div>
-  <table id="screener">
-    <thead>
-      <tr>
-        <th onclick="sortTable(0)">Symbol</th>
-        <th onclick="sortTable(1)">Close % Chg</th>
-        <th onclick="sortTable(2)">Volume % Chg</th>
-        <th onclick="sortTable(3)">Prev BB Squeeze %</th>
-        <th onclick="sortTable(4)">SMA20 Trend</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
 
-  <script>
-    const API_KLINES = "https://fapi.binance.com/fapi/v1/klines";
-    const API_EXCHANGEINFO = "https://fapi.binance.com/fapi/v1/exchangeInfo";
-    const API_TICKER24H = "https://fapi.binance.com/fapi/v1/ticker/24hr";
-    const excludeSymbols = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","TRXUSDT","MATICUSDT","DOTUSDT","TONUSDT","LTCUSDT","BCHUSDT","AVAXUSDT","LINKUSDT","UNIUSDT","XLMUSDT","OPUSDT","ETCUSDT","NEARUSDT"];
+  <div class="controls">
+    <button id="refreshBtn">Refresh Data</button>
+    <label class="small">Min New Longs:
+      <input id="minNewLongs" type="number" placeholder="0" style="width:110px" />
+    </label>
+    <label class="small">Min New Shorts:
+      <input id="minNewShorts" type="number" placeholder="0" style="width:110px" />
+    </label>
+    <label class="small">ΔOI period:
+      <select id="periodSelect">
+        <option value="15m">15m</option>
+        <option value="1h">1h</option>
+      </select>
+    </label>
+    <div id="status">Idle</div>
+  </div>
 
-    async function fetchSymbols() {
-      let resInfo = await fetch(API_EXCHANGEINFO);
-      let dataInfo = await resInfo.json();
-      let symbolsAll = dataInfo.symbols.filter(s=>s.contractType==="PERPETUAL").map(s=>s.symbol);
+  <div class="tablewrap" aria-live="polite">
+    <table id="results">
+      <thead>
+        <tr>
+          <th data-key="symbol">Symbol</th>
+          <th data-key="closePct" class="numeric">Close % (1h)</th>
+          <th data-key="volPct" class="numeric">Vol % (1h)</th>
+          <th data-key="deltaOI" class="numeric">Δ OI</th>
+          <th data-key="deltaOIpct" class="numeric">Δ OI %</th>
+          <th data-key="deltaLongPct" class="numeric">Δ Long %</th>
+          <th data-key="newLongs" class="numeric">New Longs</th>
+          <th data-key="newShorts" class="numeric">New Shorts</th>
+        </tr>
+      </thead>
+      <tbody id="body">
+        <tr><td colspan="8" class="small">Click Refresh to start scan</td></tr>
+      </tbody>
+    </table>
+  </div>
 
-      let resTick = await fetch(API_TICKER24H);
-      let tickers = await resTick.json();
+<script>
+/* ---------- Config ---------- */
+const BASE = 'https://fapi.binance.com';
+const ENDPOINT_TICKER24 = '/fapi/v1/ticker/24hr';
+const ENDPOINT_EXCHANGE = '/fapi/v1/exchangeInfo';
+const ENDPOINT_KLINES = '/fapi/v1/klines';
+const ENDPOINT_OI_HIST = '/futures/data/openInterestHist'; // futures/data
+const ENDPOINT_LS_POS = '/futures/data/topLongShortPositionRatio'; // futures/data
 
-      let filtered = tickers.filter(t => symbolsAll.includes(t.symbol));
-      filtered.sort((a,b)=> parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume));
+const MAX_SYMBOLS = 200;
+const KLINE_HOUR_LIMIT = 3; // fetch 2-3 candles to compute 1h change
+const PAUSE_MS = 120; // polite delay
+const DEFAULT_PERIOD = '15m'; // used for OI & ratio snapshots
 
-      // Only USDT pairs, exclude USDC
-      let symbols = filtered.map(t=>t.symbol).filter(s=>
-        s.endsWith("USDT") &&
-        !s.endsWith("USDC") &&
-        !excludeSymbols.includes(s)
-      );
+/* ---------- DOM ---------- */
+const refreshBtn = document.getElementById('refreshBtn');
+const statusEl = document.getElementById('status');
+const tbody = document.getElementById('body');
+const minNewLongsInput = document.getElementById('minNewLongs');
+const minNewShortsInput = document.getElementById('minNewShorts');
+const periodSelect = document.getElementById('periodSelect');
 
-      return symbols.slice(0,200);
+let results = []; // store rows
+
+/* ---------- Helpers ---------- */
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+function isFiniteNumber(v){ return typeof v === 'number' && Number.isFinite(v); }
+function pct(prev, cur){ if(!isFiniteNumber(prev) || prev === 0) return NaN; return ((cur - prev) / prev) * 100; }
+function fmtNum(v, d=2){ return (!isFiniteNumber(v)) ? '—' : (v>=0?'+':'') + Number(v).toFixed(d) + (d===2? '%' : ''); }
+function fmtPlain(v, d=2){ return (!isFiniteNumber(v)) ? '—' : Number(v).toFixed(d); }
+function parseSafeFloat(x){ const v = Number(x); return Number.isFinite(v) ? v : NaN; }
+
+/* ---------- Network helpers ---------- */
+async function fetchJSON(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('HTTP ' + r.status + ' ' + url);
+  return r.json();
+}
+
+async function getTopVolatileSymbols(limit=MAX_SYMBOLS){
+  statusEl.textContent = 'Fetching ticker 24hr...';
+  const tick = await fetchJSON(BASE + ENDPOINT_TICKER24);
+  // filter USDT perpetual-like pairs (we don't have contractType here, use exchangeInfo to confirm)
+  const info = await fetchJSON(BASE + ENDPOINT_EXCHANGE);
+  const permSymbols = new Set(info.symbols.filter(s => s.contractType === 'PERPETUAL' && s.symbol.endsWith('USDT')).map(s=>s.symbol));
+
+  const candidates = tick
+    .filter(t => permSymbols.has(t.symbol) && t.symbol.endsWith('USDT'))
+    .map(t => ({ symbol: t.symbol, change: Math.abs(parseFloat(t.priceChangePercent || 0)), quoteVol: parseFloat(t.quoteVolume || 0) }))
+    .sort((a,b) => b.change - a.change) // sort by volatility (abs price change%)
+    .slice(0, limit)
+    .map(x => x.symbol);
+  return candidates;
+}
+
+/* fetch 2 OI history points using futures/data/openInterestHist
+   (period example: '15m' or '1h'), returns array sorted oldest->newest
+   endpoint format: /futures/data/openInterestHist?symbol=BTCUSDT&period=15m&limit=2
+*/
+async function fetchOIHist(symbol, period=DEFAULT_PERIOD){
+  const url = `${BASE}/futures/data/openInterestHist?symbol=${symbol}&period=${period}&limit=2`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('openInterestHist failed ' + r.status);
+  const arr = await r.json();
+  // arr items contain sumOpenInterestValue (or sumOpenInterest?), we try to detect field
+  // keep ascending by timestamp if available
+  arr.sort((a,b) => (a.timestamp || a.time || a.sumOpenInterest || 0) - (b.timestamp || b.time || b.sumOpenInterest || 0));
+  return arr;
+}
+
+/* fetch topLongShortPositionRatio for positions (limit=2), returns oldest->newest */
+async function fetchLongShortPos(symbol, period=DEFAULT_PERIOD){
+  const url = `${BASE}/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=${period}&limit=2`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('topLongShortPositionRatio failed ' + r.status);
+  const arr = await r.json();
+  arr.sort((a,b) => (a.time || a.buySellRatio || 0) - (b.time || b.buySellRatio || 0));
+  return arr;
+}
+
+/* fetch 1h klines (limit small) */
+async function fetch1hKlines(symbol, limit=KLINE_HOUR_LIMIT){
+  const url = `${BASE + ENDPOINT_KLINES}?symbol=${symbol}&interval=1h&limit=${limit}`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('klines failed ' + r.status);
+  return r.json();
+}
+
+/* Extract OI numeric value from openInterestHist item (attempt several common keys) */
+function oiValueFromItem(item){
+  if(!item) return NaN;
+  // known field names across different endpoints: sumOpenInterestValue, sumOpenInterest, sumOpenInterestUsd, sumOpenInterestValueUsd
+  const keys = ['sumOpenInterestValue','sumOpenInterest','sumOpenInterestUsd','sumOpenInterestValueUsd','openInterest'];
+  for(const k of keys){ if(k in item){ const v = parseSafeFloat(item[k]); if(!isNaN(v)) return v; } }
+  // fallback try entire object values
+  for(const k in item){ const v = parseSafeFloat(item[k]); if(!isNaN(v)) return v; }
+  return NaN;
+}
+
+/* Extract long% from longShortPosition item.
+   The endpoint returns fields like longShortRatio (ratio long/short), longShortPercent? or longShortRatio maybe as numeric.
+   Try a few fields.
+*/
+function longPctFromItem(item){
+  if(!item) return NaN;
+  // Some endpoints: longShortRatio (ratio long/short), longShortPercent (percentage as 0.65?), longAccount (maybe)
+  if('longShortRatio' in item){
+    const ratio = parseSafeFloat(item.longShortRatio);
+    if(!isNaN(ratio)) {
+      // convert long/short ratio to percent long: long/(long+short) where ratio = long/short -> long = ratio*short => percent = ratio/(1+ratio)
+      const pct = ratio / (1 + ratio) * 100;
+      return pct;
     }
+  }
+  if('longShortPercent' in item){
+    const p = parseSafeFloat(item.longShortPercent);
+    if(!isNaN(p)) return p * 100; // if API gives 0.65 meaning 65%
+  }
+  if('longShortRatioValue' in item){
+    const ratio = parseSafeFloat(item.longShortRatioValue);
+    if(!isNaN(ratio)) return ratio / (1 + ratio) * 100;
+  }
+  // try "longAccount" / "shortAccount" if present -> compute percent
+  if('longAccount' in item && 'shortAccount' in item){
+    const la = parseSafeFloat(item.longAccount); const sa = parseSafeFloat(item.shortAccount);
+    if(!isNaN(la) && !isNaN(sa)) return (la / (la + sa)) * 100;
+  }
+  // fallback: check any numeric fields and pick a plausible one
+  for(const k of Object.keys(item)){
+    const v = parseSafeFloat(item[k]);
+    if(!isNaN(v) && v >= 0 && v <= 100) return v; // maybe already percentage
+    if(!isNaN(v) && v >= 0 && v <= 1) return v * 100;
+  }
+  return NaN;
+}
 
-    async function fetchKlines(symbol, interval="1h", limit=25) {
-      let url = `${API_KLINES}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-      let res = await fetch(url);
-      return res.json();
+/* ---------- Estimation logic ---------- */
+function estimateNewLongsShorts(oiPrev, oiCurr, longPrevPct, longCurrPct){
+  // numeric guards
+  const deltaOI = (isFiniteNumber(oiCurr) && isFiniteNumber(oiPrev)) ? (oiCurr - oiPrev) : NaN;
+  const deltaOIpct = (isFiniteNumber(oiPrev) && oiPrev !== 0) ? ((oiCurr - oiPrev) / oiPrev) * 100 : NaN;
+  // longPct in percent (0-100)
+  const lpPrev = isFiniteNumber(longPrevPct) ? longPrevPct : NaN;
+  const lpCurr = isFiniteNumber(longCurrPct) ? longCurrPct : NaN;
+  const deltaLongPct = (isFiniteNumber(lpPrev) && isFiniteNumber(lpCurr)) ? (lpCurr - lpPrev) : NaN;
+
+  // estimate new longs
+  let newLongs = NaN, newShorts = NaN;
+  if(isFiniteNumber(deltaOI) && isFiniteNumber(deltaLongPct)){
+    if(deltaOI > 0){
+      // opening positions: positive deltaOI
+      const positiveShare = Math.max(deltaLongPct / 100, 0); // if deltaLongPct negative, share for longs is 0
+      newLongs = deltaOI * positiveShare;
+      newShorts = deltaOI - newLongs;
+    } else if(deltaOI < 0) {
+      // closing positions: treat similarly but values negative
+      const positiveShare = Math.max(deltaLongPct / 100, 0);
+      newLongs = deltaOI * positiveShare;
+      newShorts = deltaOI - newLongs;
+    } else {
+      newLongs = 0; newShorts = 0;
     }
+  }
+  return { deltaOI, deltaOIpct, deltaLongPct, newLongs, newShorts };
+}
 
-    function calcBollinger(closes, period=20, mult=2) {
-      let sma = [], upper = [], lower = [];
-      for (let i=0; i<closes.length; i++) {
-        if (i < period-1) { sma.push(null); upper.push(null); lower.push(null); continue; }
-        let slice = closes.slice(i-period+1, i+1);
-        let mean = slice.reduce((a,b)=>a+b,0)/period;
-        let variance = slice.reduce((a,b)=>a+(b-mean)**2,0)/period;
-        let stdev = Math.sqrt(variance);
-        sma.push(mean);
-        upper.push(mean + mult*stdev);
-        lower.push(mean - mult*stdev);
-      }
-      return { sma, upper, lower };
-    }
+/* ---------- Rendering ---------- */
+function clearTable(){ tbody.innerHTML = '<tr><td colspan="8" class="small">Scanning not started</td></tr>'; }
+function appendRow(obj){
+  const tr = document.createElement('tr'); tr.className = 'match';
+  tr.innerHTML = `
+    <td>${obj.symbol}</td>
+    <td class="numeric">${fmtNum(obj.closePct)}</td>
+    <td class="numeric">${fmtNum(obj.volPct)}</td>
+    <td class="numeric">${isFiniteNumber(obj.deltaOI) ? Number(obj.deltaOI).toLocaleString() : '—'}</td>
+    <td class="numeric">${isFiniteNumber(obj.deltaOIpct) ? (obj.deltaOIpct>=0?'+':'')+obj.deltaOIpct.toFixed(2)+'%' : '—'}</td>
+    <td class="numeric">${isFiniteNumber(obj.deltaLongPct) ? (obj.deltaLongPct>=0?'+':'')+obj.deltaLongPct.toFixed(2)+'%' : '—'}</td>
+    <td class="numeric">${isFiniteNumber(obj.newLongs) ? obj.newLongs.toFixed(2) : '—'}</td>
+    <td class="numeric">${isFiniteNumber(obj.newShorts) ? obj.newShorts.toFixed(2) : '—'}</td>
+  `;
+  tbody.appendChild(tr);
+}
 
-    async function checkSymbol(symbol) {
+/* ---------- Main scan ---------- */
+async function runScan(){
+  try{
+    results = [];
+    clearTable();
+    statusEl.textContent = 'Building top volatile list...';
+    const universe = await getTopVolatileSymbols(MAX_SYMBOLS);
+    statusEl.textContent = `Scanning 0 / ${universe.length}`;
+    let idx = 0;
+    const period = periodSelect.value || DEFAULT_PERIOD;
+    for(const sym of universe){
+      idx++;
+      statusEl.textContent = `Scanning ${idx} / ${universe.length}: ${sym}`;
       try {
-        let klines = await fetchKlines(symbol);
-        if (!klines || klines.length < 22) return null;
+        // fetch klines (1h) small limit
+        const kl = await fetch1hKlines(sym, KLINE_HOUR_LIMIT);
+        if(!kl || kl.length < 2){ await sleep(PAUSE_MS); continue; }
+        const last = kl[kl.length-1], prev = kl[kl.length-2];
+        const lastClose = parseSafeFloat(last[4]), prevClose = parseSafeFloat(prev[4]);
+        const lastVol = parseSafeFloat(last[5]), prevVol = parseSafeFloat(prev[5]);
 
-        let closes = klines.map(k => parseFloat(k[4]));
-        let volumes = klines.map(k => parseFloat(k[5]));
-        let opens = klines.map(k => parseFloat(k[1]));
-        let highs = klines.map(k => parseFloat(k[2]));
-        let lows = klines.map(k => parseFloat(k[3]));
+        const closePct = (isFiniteNumber(prevClose) && isFiniteNumber(lastClose)) ? pct(prevClose, lastClose) : NaN;
+        const volPct = (isFiniteNumber(prevVol) && isFiniteNumber(lastVol)) ? pct(prevVol, lastVol) : NaN;
 
-        let last = klines.length-1;
-        let prev = last-1;
-        let prevprev = last-2;
+        // fetch OI hist (limit=2)
+        let oiArr = [];
+        try { oiArr = await fetchOIHist(sym, period); } catch(e){ oiArr = []; }
+        if(!oiArr || oiArr.length < 2){ await sleep(PAUSE_MS); continue; }
+        const oiPrev = oiValueFromItem(oiArr[0]);
+        const oiCurr = oiValueFromItem(oiArr[1]);
 
-        // Condition (1): current vol > prev2
-        if (!(volumes[last] > volumes[prev] && volumes[last] > volumes[prevprev])) return null;
+        // fetch long/short position ratio (limit=2)
+        let lsArr = [];
+        try { lsArr = await fetchLongShortPos(sym, period); } catch(e){ lsArr = []; }
+        if(!lsArr || lsArr.length < 2){ await sleep(PAUSE_MS); continue; }
+        const longPrevPct = longPctFromItem(lsArr[0]);
+        const longCurrPct = longPctFromItem(lsArr[1]);
 
-        let {sma, upper, lower} = calcBollinger(closes);
-        let prevBandWidth = upper[prev] - lower[prev];
-        let prevPrevBandWidth = upper[prevprev] - lower[prevprev];
-
-        // Condition (2): squeezing
-        if (prevBandWidth > prevPrevBandWidth) return null;
-
-        let currGreen = closes[last] > opens[last];
-        let breakout = false;
-
-        // Condition (3)
-        if (currGreen && highs[last] > upper[last]) breakout = true;
-        if (!currGreen && lows[last] < lower[last]) breakout = true;
-
-        // Condition (4)
-        if (currGreen && highs[last] > sma[last]) breakout = breakout && true;
-        if (!currGreen && lows[last] < sma[last]) breakout = breakout && true;
-
-        if (!breakout) return null;
-
-        // Metrics
-        let closeChange = ((closes[last] - closes[prev]) / closes[prev]) * 100;
-        let volChange = ((volumes[last] - volumes[prev]) / volumes[prev]) * 100;
-        let squeezeChange = ((prevBandWidth - prevPrevBandWidth) / prevPrevBandWidth) * 100;
-
-        let smaTrend = (sma[prev] > sma[prevprev]) ? "Increasing" : "Decreasing";
-
-        return {
-          symbol,
-          closeChange: closeChange.toFixed(2)+"%",
-          volChange: volChange.toFixed(2)+"%",
-          squeezeChange: squeezeChange.toFixed(2)+"%",
-          smaTrend
+        // Exclude small funding-like constants? The user previously wanted exclude certain funding values; here we don't have funding rates.
+        // Estimate new longs/shorts
+        const est = estimateNewLongsShorts(oiPrev, oiCurr, longPrevPct, longCurrPct);
+        const obj = {
+          symbol: sym,
+          closePct, volPct,
+          deltaOI: est.deltaOI,
+          deltaOIpct: est.deltaOIpct,
+          deltaLongPct: est.deltaLongPct,
+          newLongs: est.newLongs,
+          newShorts: est.newShorts
         };
-      } catch(e) {
-        console.error(symbol, e);
-        return null;
+
+        // Apply header filters
+        const minNL = parseFloat(minNewLongsInput.value) || 0;
+        const minNS = parseFloat(minNewShortsInput.value) || 0;
+        const passFilter = ( (!isFiniteNumber(obj.newLongs) || obj.newLongs >= minNL) && (!isFiniteNumber(obj.newShorts) || Math.abs(obj.newShorts) >= minNS) );
+
+        if(passFilter){
+          results.push(obj);
+          appendRow(obj);
+        }
+      } catch(eSym){
+        // ignore symbol errors to continue scanning
+        // console.warn('symbol error', sym, eSym);
       }
+      await sleep(PAUSE_MS);
     }
+    statusEl.textContent = `Scan complete — ${results.length} rows.`;
+  } catch(err){
+    console.error(err);
+    statusEl.textContent = 'Error: ' + (err.message || err);
+    tbody.innerHTML = '<tr><td colspan="8" class="small">Error — see console</td></tr>';
+  }
+}
 
-    async function refreshData() {
-      document.querySelector("tbody").innerHTML = "<tr><td colspan='5'>Loading symbols...</td></tr>";
-      document.getElementById("status").innerText = "Fetching top 200 symbols...";
-      let symbols = await fetchSymbols();
+/* ---------- Sorting (click headers) ---------- */
+function compareCell(a,b,asc=true){
+  const na = isNaN(Number(a)) ? null : Number(a);
+  const nb = isNaN(Number(b)) ? null : Number(b);
+  if(na===null && nb===null) return a.localeCompare(b);
+  if(na===null) return 1;
+  if(nb===null) return -1;
+  return asc ? na - nb : nb - na;
+}
 
-      let results = [];
-      for (let i=0;i<symbols.length;i++) {
-        document.getElementById("status").innerText = `Scanning ${i+1}/${symbols.length}: ${symbols[i]}`;
-        let row = await checkSymbol(symbols[i]);
-        if (row) results.push(row);
-      }
+document.querySelectorAll('#results thead th').forEach((th, idx) => {
+  th.addEventListener('click', () => {
+    const table = document.getElementById('results');
+    const tbodyEl = table.tBodies[0];
+    const rowsArr = Array.from(tbodyEl.rows);
+    // determine current sort direction
+    const current = table.getAttribute('data-sort-col');
+    let dir = table.getAttribute('data-sort-dir') || 'desc';
+    if(current == idx) dir = dir === 'asc' ? 'desc' : 'asc';
+    const asc = dir === 'asc';
+    rowsArr.sort((r1,r2) => {
+      const a = r1.cells[idx].innerText.replace(/%/g,'').replace(/,/g,'').trim();
+      const b = r2.cells[idx].innerText.replace(/%/g,'').replace(/,/g,'').trim();
+      return compareCell(a,b,asc);
+    });
+    rowsArr.forEach(r => tbodyEl.appendChild(r));
+    table.setAttribute('data-sort-col', idx);
+    table.setAttribute('data-sort-dir', dir);
+  });
+});
 
-      let tbody = document.querySelector("tbody");
-      tbody.innerHTML = "";
-      if (results.length === 0) {
-        tbody.innerHTML = "<tr><td colspan='5'>No matches found</td></tr>";
-      } else {
-        results.forEach(r=>{
-          tbody.innerHTML += `<tr>
-            <td>${r.symbol}</td>
-            <td>${r.closeChange}</td>
-            <td>${r.volChange}</td>
-            <td>${r.squeezeChange}</td>
-            <td>${r.smaTrend}</td>
-          </tr>`;
-        });
-      }
-      document.getElementById("status").innerText = "Scan complete";
-    }
+/* ---------- Wire ---------- */
+refreshBtn.addEventListener('click', () => {
+  tbody.innerHTML = '<tr><td colspan="8" class="small">Starting scan…</td></tr>';
+  runScan();
+});
 
-    function sortTable(col) {
-      let table = document.getElementById("screener");
-      let rows = Array.from(table.rows).slice(1);
-      let asc = table.getAttribute("data-sort-col")==col && table.getAttribute("data-sort-dir")=="asc" ? false : true;
-      rows.sort((a,b)=>{
-        let x = a.cells[col].innerText.replace("%","");
-        let y = b.cells[col].innerText.replace("%","");
-        if (isNaN(x) || isNaN(y)) return asc ? x.localeCompare(y) : y.localeCompare(x);
-        return asc ? x-y : y-x;
-      });
-      rows.forEach(r=>table.tBodies[0].appendChild(r));
-      table.setAttribute("data-sort-col", col);
-      table.setAttribute("data-sort-dir", asc ? "asc":"desc");
-    }
+window.addEventListener('load', () => {
+  clearTable();
+});
 
-    // Run on page load
-    refreshData();
-  </script>
+</script>
 </body>
 </html>
-
