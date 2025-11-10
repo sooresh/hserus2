@@ -31,14 +31,15 @@
       <th onclick="sortTable(0)">Symbol</th>
       <th onclick="sortTable(1)">Max Chg%</th>
       <th onclick="sortTable(2)">Vol%</th>
-      <th onclick="sortTable(3)">Prev/Cur Len%</th>
+      <th onclick="sortTable(3)">Prev Vol%</th>
+      <th onclick="sortTable(4)">Prev/Cur Body%</th>
     </tr>
   </thead>
   <tbody></tbody>
 </table>
 
 <script>
-let sortDir=[true,true,true,true];
+let sortDir=[true,true,true,true,true];
 
 async function fetchScanner(){
   const progressBar=document.getElementById("progressBar");
@@ -61,35 +62,38 @@ async function fetchScanner(){
 
     async function processSymbol(sym){
       try{
-        const data=await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1h&limit=3`).then(r=>r.json());
-        if(!Array.isArray(data)||data.length<3)return;
-        const prev=data[data.length-2], curr=data[data.length-1];
-        const open=parseFloat(curr[1]), high=parseFloat(curr[2]), low=parseFloat(curr[3]), close=parseFloat(curr[4]);
-        const openPrev=parseFloat(prev[1]), highPrev=parseFloat(prev[2]), lowPrev=parseFloat(prev[3]), closePrev=parseFloat(prev[4]);
-        const vol=parseFloat(curr[5]), volPrev=parseFloat(prev[5]);
+        const data=await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1h&limit=4`).then(r=>r.json());
+        if(!Array.isArray(data)||data.length<4)return;
+        const prevPrev=data[data.length-3], prev=data[data.length-2], curr=data[data.length-1];
+
+        const [o0, h0, l0, c0, v0] = [parseFloat(prevPrev[1]), parseFloat(prevPrev[2]), parseFloat(prevPrev[3]), parseFloat(prevPrev[4]), parseFloat(prevPrev[5])];
+        const [o1, h1, l1, c1, v1] = [parseFloat(prev[1]), parseFloat(prev[2]), parseFloat(prev[3]), parseFloat(prev[4]), parseFloat(prev[5])];
+        const [o2, h2, l2, c2, v2] = [parseFloat(curr[1]), parseFloat(curr[2]), parseFloat(curr[3]), parseFloat(curr[4]), parseFloat(curr[5])];
 
         // --- Conditions ---
-        if(vol<=volPrev*1.6)return; // cond 1
-        const isGreen=close>open, prevGreen=closePrev>openPrev;
-        if(isGreen===prevGreen)return; // cond 2
-        const lenCur=Math.abs(high-low), lenPrev=Math.abs(highPrev-lowPrev);
-        if(lenPrev<lenCur*0.2)return; // cond 3
+        if(v2 <= v1 * 1.6) return; // cond 1: volume
+        const currGreen = c2 > o2, prevGreen = c1 > o1;
+        if(currGreen === prevGreen) return; // cond 2: opposite colors
+        const bodyCur = Math.abs(c2 - o2);
+        const bodyPrev = Math.abs(c1 - o1);
+        if(bodyPrev < bodyCur * 0.2) return; // cond 3: prev body <20%
 
         // --- Metrics ---
-        const closePctCur=((close-open)/open)*100;
-        const closePctPrev=((closePrev-openPrev)/openPrev)*100;
-        const maxChg=Math.max(Math.abs(closePctCur),Math.abs(closePctPrev)).toFixed(2);
-        const volPct=((vol/volPrev)-1)*100;
-        const lenRatio=(lenPrev/lenCur)*100;
+        const closePctCur = ((c2 - o2) / o2) * 100;
+        const closePctPrev = ((c1 - o1) / o1) * 100;
+        const maxChg = Math.max(Math.abs(closePctCur), Math.abs(closePctPrev)).toFixed(2);
+        const volPct = ((v2 / v1) - 1) * 100;
+        const prevVolPct = ((v1 / v0) - 1) * 100;
+        const bodyRatio = (bodyPrev / bodyCur) * 100;
 
-        results.push({symbol:sym,maxChg,volPct:volPct.toFixed(2),lenRatio:lenRatio.toFixed(2)});
+        results.push({symbol:sym,maxChg,volPct:volPct.toFixed(2),prevVolPct:prevVolPct.toFixed(2),bodyRatio:bodyRatio.toFixed(2)});
       }catch(e){/*ignore*/}finally{
         done++; progressBar.style.width=((done/total)*100).toFixed(1)+"%";
         progressText.textContent=`Scanning ${done}/${total} symbols...`;
       }
     }
 
-    // Step 2 – Process in batches of 20
+    // Step 2 – Parallel batches
     for(let i=0;i<symbols.length;i+=batchSize){
       await Promise.all(symbols.slice(i,i+batchSize).map(processSymbol));
     }
@@ -100,7 +104,8 @@ async function fetchScanner(){
         <td>${r.symbol}</td>
         <td>${r.maxChg}%</td>
         <td>${r.volPct}%</td>
-        <td>${r.lenRatio}%</td>
+        <td>${r.prevVolPct}%</td>
+        <td>${r.bodyRatio}%</td>
       </tr>`).join("");
     progressBar.style.width="100%";
     progressText.textContent=`✅ Completed. ${results.length} matches.`;
