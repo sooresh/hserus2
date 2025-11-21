@@ -35,6 +35,7 @@
             font-size: 12px;
             white-space: nowrap;
             z-index: 10;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
     </style>
 </head>
@@ -80,8 +81,13 @@
                             <th class="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider sortable group" data-col="sameColor" data-type="str">
                                 Color Match <span class="sort-arrow"></span>
                             </th>
-                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider sortable group tooltip-header relative" data-col="dirChange" data-type="str" data-title="Is there a change in direction of LS Pos Ratio OR LS Acc Ratio?">
-                                Dir Change? <span class="sort-arrow"></span>
+                            <!-- New Column -->
+                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider sortable group tooltip-header relative" data-col="smaStatus" data-type="str" data-title="Is Price > 20 SMA (1h)?">
+                                vs SMA 20 <span class="sort-arrow"></span>
+                            </th>
+                            <!-- Updated Logic Column -->
+                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider sortable group tooltip-header relative" data-col="dirChange" data-type="str" data-title="Change in direction of LS Pos Ratio ONLY">
+                                Pos Dir Chg? <span class="sort-arrow"></span>
                             </th>
                             <th class="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider sortable group tooltip-header relative" data-col="posStr" data-type="num" data-title="Strength of LS Position Ratio Change">
                                 Pos Str <span class="sort-arrow"></span>
@@ -93,7 +99,7 @@
                     </thead>
                     <tbody id="results-body" class="divide-y divide-gray-700 bg-gray-800">
                         <tr>
-                            <td colspan="7" class="px-6 py-12 text-center text-gray-500">
+                            <td colspan="8" class="px-6 py-12 text-center text-gray-500">
                                 Click "Start Scan" to begin analysis.
                             </td>
                         </tr>
@@ -112,6 +118,7 @@
         const EXCLUDED = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'];
         const TOP_N = 250;
         const BATCH_SIZE = 5;
+        const SMA_PERIOD = 20;
         
         // --- State ---
         let scannedData = [];
@@ -150,22 +157,15 @@
         async function runScanner() {
             setLoading(true);
             scannedData = [];
-            resultsBody.innerHTML = '<tr><td colspan="7" class="px-6 py-8 text-center text-gray-500 animate-pulse">Initializing Scanner...</td></tr>';
+            resultsBody.innerHTML = '<tr><td colspan="8" class="px-6 py-8 text-center text-gray-500 animate-pulse">Initializing Scanner...</td></tr>';
             
             try {
                 // 1. Get Top Volatile Symbols
                 statusText.textContent = "Fetching market data...";
                 const allTickers = await fetchJson(`${API_BASE}/fapi/v1/ticker/24hr`);
                 
+                // Sort by absolute volatility magnitude
                 let symbols = allTickers
-                    .filter(t => t.symbol.endsWith('USDT') && !EXCLUDED.includes(t.symbol))
-                    .sort((a, b) => parseFloat(b.priceChangePercent) - parseFloat(a.priceChangePercent)) // Sort by volatility (abs value usually preferred but user said "volatile" implies change magnitude)
-                    .slice(0, TOP_N)
-                    .map(t => t.symbol);
-
-                // Use absolute volatility sorting if strictly required, but usually 'volatile' implies high % movement
-                // Let's refine to Absolute Change for better "volatility" metric
-                symbols = allTickers
                     .filter(t => t.symbol.endsWith('USDT') && !EXCLUDED.includes(t.symbol))
                     .sort((a, b) => Math.abs(parseFloat(b.priceChangePercent)) - Math.abs(parseFloat(a.priceChangePercent)))
                     .slice(0, TOP_N)
@@ -200,7 +200,7 @@
                         renderTable();
                     }
 
-                    // Small delay to respect rate limits slightly
+                    // Small delay to respect rate limits
                     await new Promise(r => setTimeout(r, 150));
                 }
 
@@ -212,19 +212,22 @@
             } catch (err) {
                 console.error(err);
                 statusText.textContent = "Error during scan: " + err.message;
-                resultsBody.innerHTML = `<tr><td colspan="7" class="px-6 py-4 text-center text-red-400">Error: ${err.message}</td></tr>`;
+                resultsBody.innerHTML = `<tr><td colspan="8" class="px-6 py-4 text-center text-red-400">Error: ${err.message}</td></tr>`;
             } finally {
                 setLoading(false);
             }
         }
 
         async function analyzeSymbol(symbol) {
-            // Fetch Klines (1h) - Need 2 candles
-            const klines = await fetchJson(`${API_BASE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=2`);
-            if (!klines || klines.length < 2) return null;
+            // Fetch Klines (1h) - Need at least 20+ candles for SMA, we fetch 25 to be safe
+            const limit = 25; 
+            const klines = await fetchJson(`${API_BASE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=${limit}`);
+            
+            // Need enough data for SMA(20)
+            if (!klines || klines.length < SMA_PERIOD) return null;
 
-            const prev = klines[0];
-            const curr = klines[1];
+            const curr = klines[klines.length - 1];
+            const prev = klines[klines.length - 2];
 
             // [Open, High, Low, Close, Volume, ...]
             const currClose = parseFloat(curr[4]);
@@ -239,7 +242,6 @@
             if (currVol <= (prevVol * 0.95)) return null;
 
             // If Volume passes, fetch expensive LS Ratio data
-            // Note: These endpoints sometimes fail for new coins, return empty arrays
             const [posRatioData, accRatioData] = await Promise.all([
                 fetchJson(`${API_BASE}/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=5m&limit=1`)
                     .then(d => d.length ? d[0] : null)
@@ -250,7 +252,6 @@
             ]);
 
             // We also need 1h data for both (Prev and Current 1h)
-            // To get current and prev 1h, we ask for limit=2
             const [posRatio1h, accRatio1h] = await Promise.all([
                 fetchJson(`${API_BASE}/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=1h&limit=2`),
                 fetchJson(`${API_BASE}/futures/data/topLongShortAccountRatio?symbol=${symbol}&period=1h&limit=2`)
@@ -261,7 +262,6 @@
             }
 
             // --- Data Extraction ---
-            // Note: API returns array sorted by time. Last element is latest.
             const pos5m = parseFloat(posRatioData.longShortRatio);
             const acc5m = parseFloat(accRatioData.longShortRatio);
 
@@ -298,6 +298,15 @@
 
             if (!condition2Met) return null;
 
+            // --- SMA Calculation ---
+            // Get last 20 closes (including current)
+            const closes = klines.slice(-SMA_PERIOD).map(k => parseFloat(k[4]));
+            const sum = closes.reduce((a, b) => a + b, 0);
+            const sma20 = sum / SMA_PERIOD;
+            
+            const smaStatus = currClose > sma20 ? "Above" : "Below";
+
+
             // --- Prepare Frontend Data ---
             
             // (2) Close %
@@ -311,20 +320,16 @@
             const sameColor = (isGreen === prevIsGreen) ? "Yes" : "No";
 
             // (5) Direction Change?
-            // Change in direction of posRatio OR accRatio
-            // Logic: (curr > 0 and prev < 0) OR (curr < 0 and prev > 0)
+            // NEW LOGIC: Check ONLY posRatio change direction
             const posDirChange = (currentPosChange > 0 && prevPosChange < 0) || (currentPosChange < 0 && prevPosChange > 0);
-            const accDirChange = (currentAccChange > 0 && prevAccChange < 0) || (currentAccChange < 0 && prevAccChange > 0);
-            const dirChange = (posDirChange || accDirChange) ? "Yes" : "No";
+            const dirChange = posDirChange ? "Yes" : "No";
 
             // (6) Strength of Pos Change
-            // abs(currentposchgpct) / abs(prevposchgpct)
-            // Handle div by zero
             let posStr = 0;
             if (Math.abs(prevPosChgPct) > 0.00001) {
                 posStr = Math.abs(currentPosChgPct) / Math.abs(prevPosChgPct);
             } else {
-                posStr = Math.abs(currentPosChgPct) > 0 ? 999 : 0; // High value if prev was 0 but curr is not
+                posStr = Math.abs(currentPosChgPct) > 0 ? 999 : 0;
             }
 
             // (7) Total Strength
@@ -343,7 +348,8 @@
                 sameColor,
                 dirChange,
                 posStr,
-                totalStr
+                totalStr,
+                smaStatus // New Field
             };
         }
 
@@ -390,7 +396,7 @@
 
         function renderTable() {
             if (scannedData.length === 0) {
-                resultsBody.innerHTML = '<tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">No symbols found matching criteria yet.</td></tr>';
+                resultsBody.innerHTML = '<tr><td colspan="8" class="px-6 py-8 text-center text-gray-500">No symbols found matching criteria yet.</td></tr>';
                 return;
             }
 
@@ -407,6 +413,11 @@
                     </td>
                     <td class="px-4 py-3 text-center text-gray-300">
                         <span class="px-2 py-1 rounded text-xs ${item.sameColor === 'Yes' ? 'bg-gray-700 text-gray-200' : 'bg-gray-800 text-gray-500'}">${item.sameColor}</span>
+                    </td>
+                    <td class="px-4 py-3 text-center">
+                         <span class="px-2 py-1 rounded text-xs font-medium ${item.smaStatus === 'Above' ? 'bg-green-900/30 text-green-400 border border-green-700/30' : 'bg-red-900/30 text-red-400 border border-red-700/30'}">
+                            ${item.smaStatus}
+                         </span>
                     </td>
                     <td class="px-4 py-3 text-center">
                          <span class="px-2 py-1 rounded text-xs ${item.dirChange === 'Yes' ? 'bg-yellow-900/30 text-yellow-400 border border-yellow-700/50' : 'text-gray-600'}">${item.dirChange}</span>
@@ -443,4 +454,3 @@
     </script>
 </body>
 </html>
-
